@@ -1,9 +1,13 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace microcam {
 
+// Owns the virtual console while the viewer runs: the VT goes to graphics mode
+// and the text console is detached from the framebuffer, so nothing else can
+// draw on the screen the viewer owns. Restored on destruction.
 class Console {
 public:
     explicit Console(bool take_over);
@@ -11,8 +15,17 @@ public:
     Console(const Console&) = delete;
     Console& operator=(const Console&) = delete;
 
+    // Set when the text console stayed attached to the framebuffer. The viewer
+    // still works, but login prompts or kernel messages can overlap the picture.
+    const std::string& warning() const noexcept { return warning_; }
+
 private:
+    void detach_framebuffer_console();
+    void attach_framebuffer_console();
+
     int fd_ = -1;
+    std::vector<std::string> binds_;
+    std::string warning_;
 };
 
 class Backlight {

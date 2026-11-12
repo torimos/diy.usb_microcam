@@ -55,7 +55,7 @@ Full-screen USB camera viewer for a Linux framebuffer and evdev touchscreen.
   --no-backlight      Leave the GPIO untouched
   --fill              Fill the screen by cropping the picture
   --no-osd            Hide zoom, camera and FPS overlay
-  --no-vt             Don't change the virtual console mode
+  --no-vt             Don't take over the virtual console and its framebuffer
   -h, --help          Show this help
 
 Double-tap to cycle zoom 1x / 2.5x / 5x.
@@ -111,8 +111,10 @@ Options parse(int argc, char* argv[], bool& help) {
 
 int run(const Options& opts) {
     StopSignal stop;
-    Framebuffer display(opts.framebuffer);
     Console console(opts.vt);
+    Framebuffer display(opts.framebuffer);
+    if (!console.warning().empty()) std::cerr << "[console] " << console.warning() << '\n';
+    display.clear();  // Erase boot and login text left on the screen.
     Backlight backlight;
     std::string error;
     bool idle_enabled = opts.backlight && opts.idle > 0s;

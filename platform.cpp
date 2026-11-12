@@ -1,5 +1,6 @@
 #include "platform.hpp"
 
+#include <cctype>
 #include <cerrno>
 #include <csignal>
 #include <cstring>
@@ -8,11 +9,84 @@
 #include <linux/kd.h>
 #include <linux/vt.h>
 #include <stdexcept>
+#include <string_view>
 #include <sys/ioctl.h>
 #include <sys/signalfd.h>
 #include <unistd.h>
 
 namespace microcam {
+namespace {
+
+// The Linux text console is drawn into the framebuffer, the same memory the
+// viewer writes. While it stays bound, getty, kernel messages, and the blinking
+// cursor are painted straight over the picture, and the console blanker can
+// black out the whole screen. Detach it for as long as the viewer runs.
+constexpr const char* vtconsole_dir = "/sys/class/vtconsole";
+
+std::string lower(std::string_view text) {
+    std::string result;
+    result.reserve(text.size());
+    for (const char ch : text) result += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    return result;
+}
+
+bool read_text(const std::string& file, std::string& text, std::string& error) {
+    const int fd = ::open(file.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        error = file + ": " + std::strerror(errno);
+        return false;
+    }
+    char buffer[128]{};
+    const auto length = ::read(fd, buffer, sizeof(buffer) - 1);
+    const int code = errno;
+    ::close(fd);
+    if (length <= 0) {
+        error = file + ": " + std::strerror(code ? code : EIO);
+        return false;
+    }
+    text.assign(buffer, static_cast<std::size_t>(length));
+    return true;
+}
+
+bool write_digit(const std::string& file, char digit, std::string& error) {
+    const int fd = ::open(file.c_str(), O_WRONLY | O_CLOEXEC);
+    if (fd < 0) {
+        error = file + ": " + std::strerror(errno);
+        return false;
+    }
+    const char text[] = {digit, '\n'};
+    const auto written = ::write(fd, text, sizeof(text));
+    const int code = errno;
+    ::close(fd);
+    if (written != static_cast<ssize_t>(sizeof(text))) {
+        error = file + ": " + std::strerror(code ? code : EIO);
+        return false;
+    }
+    return true;
+}
+
+// Collect the "bind" files of the consoles that draw on a framebuffer device.
+std::vector<std::string> framebuffer_consoles(std::string& error) {
+    std::vector<std::string> found;
+    for (int index = 0;; ++index) {
+        const auto directory = std::string(vtconsole_dir) + "/vtcon" + std::to_string(index);
+        std::string name;
+        if (!read_text(directory + "/name", name, error)) {
+            if (index == 0) return found;  // No console class at all.
+            error.clear();
+            break;  // vtcon<index> is the first one that does not exist.
+        }
+        const auto label = lower(name);
+        if (label.find("frame buffer") == std::string::npos && label.find("framebuffer") == std::string::npos)
+            continue;
+        std::string state, ignored;
+        const auto bind = directory + "/bind";
+        if (read_text(bind, state, ignored) && !state.empty() && state[0] == '1') found.push_back(bind);
+    }
+    return found;
+}
+
+}  // namespace
 
 Console::Console(bool take_over) {
     if (!take_over) return;
@@ -49,12 +123,37 @@ Console::Console(bool take_over) {
         ::close(fd_);
         throw std::runtime_error(path + " KDSETMODE: " + std::strerror(code) + tip);
     }
+    detach_framebuffer_console();
+}
+
+void Console::detach_framebuffer_console() {
+    std::string error;
+    binds_ = framebuffer_consoles(error);
+    if (!error.empty()) {
+        warning_ = "could not check the text consoles: " + error;
+        return;
+    }
+    for (const auto& bind : binds_) {
+        if (write_digit(bind, '0', error)) continue;
+        warning_ = "text console still on the screen: " + error;
+        return;
+    }
+}
+
+void Console::attach_framebuffer_console() {
+    for (const auto& bind : binds_) {
+        std::string ignored;
+        write_digit(bind, '1', ignored);
+    }
+    binds_.clear();
 }
 
 Console::~Console() {
-    if (fd_ < 0) return;
-    ioctl(fd_, KDSETMODE, KD_TEXT);
-    ::close(fd_);
+    if (fd_ >= 0) {
+        ioctl(fd_, KDSETMODE, KD_TEXT);
+        ::close(fd_);
+    }
+    attach_framebuffer_console();
 }
 
 Backlight::~Backlight() {
