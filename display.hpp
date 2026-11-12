@@ -29,9 +29,11 @@ public:
     // Source and destination rectangles must fit inside their respective images.
     void draw(const std::uint32_t* pixels, int frame_width, int frame_height,
               int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
-              std::string_view status, CaptureFeedback feedback, bool capture_flash);
+              std::string_view status, CaptureFeedback feedback, bool capture_flash,
+              bool zoom_locked = false);
     Rect screenshot_touch_area() const noexcept;
     Rect reset_touch_area() const noexcept;
+    Rect lock_touch_area() const noexcept;
     void save_screenshot(const std::string& directory, std::string& path) const;
     void message(std::string_view text);
 
@@ -47,8 +49,10 @@ private:
     void prepare_status(std::string_view text);
     Rect screenshot_button() const noexcept;
     Rect reset_button() const noexcept;
+    Rect lock_button() const noexcept;
     void prepare_button(CaptureFeedback feedback);
     void prepare_reset_button();
+    void prepare_lock_button(bool locked);
 
     int fd_ = -1;
     std::uint8_t* mapping_ = nullptr;
@@ -75,7 +79,9 @@ private:
     std::vector<std::vector<StatusPixel>> status_rows_;
     std::vector<std::uint8_t> button_pixels_;
     std::vector<std::uint8_t> reset_pixels_;
+    std::vector<std::uint8_t> lock_pixels_;
     CaptureFeedback button_feedback_ = CaptureFeedback::ready;
+    int lock_prepared_ = -1;  // -1 unset, 0 unlocked, 1 locked
     bool flash_visible_ = false;
 };
 

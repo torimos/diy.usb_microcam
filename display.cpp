@@ -275,7 +275,8 @@ void Framebuffer::convert_row(const std::uint32_t* input, int width) {
 
 void Framebuffer::draw(const std::uint32_t* pixels, int frame_width, int frame_height,
                        int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
-                       std::string_view status, CaptureFeedback feedback, bool capture_flash) {
+                       std::string_view status, CaptureFeedback feedback, bool capture_flash,
+                       bool zoom_locked) {
     if (!pixels || frame_width <= 0 || frame_height <= 0 ||
         sx < 0 || sy < 0 || sw <= 0 || sh <= 0 || sx > frame_width - sw || sy > frame_height - sh ||
         dx < 0 || dy < 0 || dw <= 0 || dh <= 0 || dx > width_ - dw || dy > height_ - dh) {
@@ -305,15 +306,18 @@ void Framebuffer::draw(const std::uint32_t* pixels, int frame_width, int frame_h
     if (button.w) prepare_button(feedback);
     const auto reset = reset_button();
     if (reset.w) prepare_reset_button();
+    const auto lock = lock_button();
+    if (lock.w) prepare_lock_button(zoom_locked);
     const bool paint_status = had_status || !status_text_.empty();
     const bool repaint_border = flash_visible_ || capture_flash;
     flash_visible_ = capture_flash;
     const auto flash_color = capture_flash ? pack(0xffffff) : 0;
     const int first_y = repaint_border ? 0 :
-        std::min({dy, paint_status ? status_margin : dy, button.w ? button.y : dy});
+        std::min({dy, paint_status ? status_margin : dy, button.w ? button.y : dy,
+                  lock.w ? lock.y : dy});
     const int last_y = repaint_border ? height_ :
         std::max({dy + dh, paint_status ? std::min(height_, status_margin + status_height) : 0,
-                  button.y + button.h});
+                  button.y + button.h, lock.w ? lock.y + lock.h : 0});
     const auto row_bytes = static_cast<std::size_t>(dw) * pixel_bytes_;
     const auto dest_offset = static_cast<std::size_t>(dx) * pixel_bytes_;
     const std::uint8_t* output = nullptr;
@@ -335,7 +339,8 @@ void Framebuffer::draw(const std::uint32_t* pixels, int frame_width, int frame_h
         }
         const bool status_row = paint_status && y >= status_margin && y < status_margin + status_height;
         const bool button_row = button.w && y >= button.y && y < button.y + button.h;
-        if (status_row || button_row || repaint_border) {
+        const bool lock_row = lock.w && y >= lock.y && y < lock.y + lock.h;
+        if (status_row || button_row || lock_row || repaint_border) {
             // Write the overlay and its underlying video together. Include the bars
             // so a shorter or hidden label clears any pixels left by the last one.
             auto* row = composite_row_.data();
@@ -354,6 +359,11 @@ void Framebuffer::draw(const std::uint32_t* pixels, int frame_width, int frame_h
                     std::memcpy(row + reset.x * pixel_bytes_,
                                 reset_pixels_.data() + (y - reset.y) * bytes, bytes);
                 }
+            }
+            if (lock_row) {
+                const auto bytes = static_cast<std::size_t>(lock.w) * pixel_bytes_;
+                std::memcpy(row + lock.x * pixel_bytes_,
+                            lock_pixels_.data() + (y - lock.y) * bytes, bytes);
             }
             if (capture_flash) {
                 if (y < flash_border || y >= height_ - flash_border) {
@@ -437,6 +447,18 @@ Rect Framebuffer::reset_touch_area() const noexcept {
     return {0, y, button.x + button.w + button_touch_margin, height_ - y};
 }
 
+Rect Framebuffer::lock_button() const noexcept {
+    if (width_ < button_size + button_margin || height_ < button_size + button_margin) return {};
+    return {width_ - button_size - button_margin, button_margin, button_size, button_size};
+}
+
+Rect Framebuffer::lock_touch_area() const noexcept {
+    const auto button = lock_button();
+    if (!button.w) return {};
+    const int x = std::max(0, button.x - button_touch_margin);
+    return {x, 0, width_ - x, std::min(height_, button.y + button.h + button_touch_margin)};
+}
+
 void Framebuffer::prepare_reset_button() {
     if (!reset_pixels_.empty()) return;
     const auto background = pack(0x18222c);
@@ -452,6 +474,39 @@ void Framebuffer::prepare_reset_button() {
             const bool arrow = y >= 22 && y <= 34 && 2 * std::abs(x - 15) <= 35 - y;
             write_pixel(reset_pixels_.data() + (y * button_size + x) * pixel_bytes_,
                         pixel_bytes_, arc || arrow ? foreground : edge ? border : background);
+        }
+    }
+}
+
+void Framebuffer::prepare_lock_button(bool locked) {
+    const int state = locked ? 1 : 0;
+    if (!lock_pixels_.empty() && lock_prepared_ == state) return;
+    lock_prepared_ = state;
+    // Amber background and bright border highlight the active (locked) state.
+    const auto background = pack(locked ? 0xe0a030 : 0x18222c);
+    const auto foreground = pack(0xffffff);
+    const auto border = pack(locked ? 0xffd24a : 0x80909c);
+    lock_pixels_.resize(button_size * button_size * pixel_bytes_);
+    // The shackle sits centered (closed) when locked and shifts off the body
+    // to the left (open) when unlocked.
+    const int shackle_cx = locked ? 30 : 26;
+    const int shackle_cy = locked ? 31 : 27;
+    for (int y = 0; y < button_size; ++y) {
+        for (int x = 0; x < button_size; ++x) {
+            const bool edge = x == 0 || y == 0 || x == button_size - 1 || y == button_size - 1;
+            const bool body = x >= 19 && x < 41 && y >= 30 && y < 47;
+            const int sdx = x - shackle_cx, sdy = y - shackle_cy;
+            const int sr = sdx * sdx + sdy * sdy;
+            const bool shackle = y <= shackle_cy && sr >= 8 * 8 && sr <= 12 * 12;
+            const int kdx = x - 30, kdy = y - 36;
+            const bool keyhole = locked && body &&
+                                 ((kdx * kdx + kdy * kdy) <= 2 * 2 ||
+                                  (kdx >= -1 && kdx <= 1 && kdy >= 0 && kdy <= 5));
+            std::uint32_t color = edge ? border : background;
+            if (keyhole) color = background;
+            else if (shackle || body) color = foreground;
+            write_pixel(lock_pixels_.data() + (y * button_size + x) * pixel_bytes_,
+                        pixel_bytes_, color);
         }
     }
 }

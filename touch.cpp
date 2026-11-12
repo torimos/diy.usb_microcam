@@ -104,6 +104,7 @@ bool Viewport::reset_zoom() {
 }
 
 bool Viewport::cycle_zoom(double x, double y) {
+    if (locked_) return false;
     if (zoom_ == 5) return reset_zoom();
     const auto dst = destination();
     const auto crop = crop_size();
@@ -239,7 +240,8 @@ void TouchDevice::resync() {
     blocked_ = std::any_of(slots_.begin(), slots_.end(), [](const Slot& s) { return s.id >= 0; });
 }
 
-TouchUpdate TouchDevice::read_events(Viewport& view, bool sleeping, Rect screenshot_button, Rect reset_button) {
+TouchUpdate TouchDevice::read_events(Viewport& view, bool sleeping, Rect screenshot_button, Rect reset_button,
+                                     Rect lock_button) {
     TouchUpdate update;
     if (fd_ < 0) return update;
 
@@ -269,7 +271,8 @@ TouchUpdate TouchDevice::read_events(Viewport& view, bool sleeping, Rect screens
                     const auto stamp = seconds(ev.input_event_sec) + microseconds(ev.input_event_usec);
                     now = Clock::time_point(duration_cast<Clock::duration>(stamp));
                 }
-                process_report(now, view, sleeping && !update.activity, screenshot_button, reset_button, update);
+                process_report(now, view, sleeping && !update.activity, screenshot_button, reset_button,
+                               lock_button, update);
                 continue;
             }
             if (dropped_) continue;
@@ -314,7 +317,7 @@ void TouchDevice::block_gestures() {
 }
 
 void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sleeping, Rect screenshot_button,
-                                 Rect reset_button, TouchUpdate& update) {
+                                 Rect reset_button, Rect lock_button, TouchUpdate& update) {
     unsigned active = 0, current = 0;
     for (unsigned i = 0; i < slots_.size(); ++i) {
         // This WaveShare panel reports each physical touch in slots 0 and 1.
@@ -373,13 +376,26 @@ void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sle
     const bool reset_end = reset_button.contains(point.x, point.y);
     const bool screenshot_start = screenshot_button.contains(released.start.x, released.start.y);
     const bool screenshot_end = screenshot_button.contains(point.x, point.y);
-    if (reset_start || reset_end || screenshot_start || screenshot_end) {
+    const bool lock_start = lock_button.contains(released.start.x, released.start.y);
+    const bool lock_end = lock_button.contains(point.x, point.y);
+    if (reset_start || reset_end || screenshot_start || screenshot_end || lock_start || lock_end) {
         last_tap_.reset();
         if (duration <= max_button_tap_time &&
             released.max_displacement_sq <= max_button_displacement * max_button_displacement) {
-            if (reset_start && reset_end) update.changed |= view.reset_zoom();
-            if (screenshot_start && screenshot_end) update.screenshot = true;
+            if (lock_start && lock_end) {
+                view.toggle_lock();
+                update.lock_toggled = true;
+                update.changed = true;
+            } else {
+                if (reset_start && reset_end) update.changed |= view.reset_zoom();
+                if (screenshot_start && screenshot_end) update.screenshot = true;
+            }
         }
+        return;
+    }
+    // While zoom is locked, ignore every other gesture (double-tap zoom).
+    if (view.locked()) {
+        last_tap_.reset();
         return;
     }
     if (released.max_displacement_sq > max_tap_displacement * max_tap_displacement ||

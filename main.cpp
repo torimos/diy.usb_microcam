@@ -229,7 +229,7 @@ int run(const Options& opts) {
                 }
                 display.draw(frame.pixels.data(), frame.width, frame.height,
                              src.x, src.y, src.w, src.h, dst.x, dst.y, dst.w, dst.h,
-                             status, feedback, capture_flash);
+                             status, feedback, capture_flash, view.locked());
             } else {
                 display.message(camera.fd() < 0 ? "NO CAMERA - WAITING" : "WAITING FOR VIDEO");
             }
@@ -256,7 +256,8 @@ int run(const Options& opts) {
                 const bool buttons_visible = have_frame && !asleep;
                 const auto update = touch.read_events(view, asleep,
                     buttons_visible ? display.screenshot_touch_area() : Rect{},
-                    buttons_visible ? display.reset_touch_area() : Rect{});
+                    buttons_visible ? display.reset_touch_area() : Rect{},
+                    buttons_visible ? display.lock_touch_area() : Rect{});
                 if (update.screenshot && Clock::now() >= next_screenshot) {
                     try {
                         std::string path;

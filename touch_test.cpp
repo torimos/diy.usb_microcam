@@ -249,6 +249,39 @@ void verify_gestures() {
     events.contact(13824, 0, -1);
     require(touch.read_events(view, false, button, reset).changed && view.zoom() == 2.5,
             "a slower pair with slight motion still zooms");
+
+    const microcam::Rect lock{896, 12, 128, 128};
+    events.contact(14200, 0, 1, 42, 550);
+    events.contact(14260, 0, -1);
+    touch.read_events(view, false, button, reset, lock);
+    require(view.zoom() == 1 && !view.locked(), "reset to baseline before the lock test");
+    events.double_tap(14500, 512, 300);
+    require(touch.read_events(view, false, button, reset, lock).changed && view.zoom() == 2.5,
+            "double tap zooms while unlocked");
+    events.contact(15000, 0, 1, 950, 60);
+    events.contact(15060, 0, -1);
+    update = touch.read_events(view, false, button, reset, lock);
+    require(update.lock_toggled && update.changed && view.locked() && view.zoom() == 2.5,
+            "tapping the lock button enables zoom lock");
+    events.double_tap(15500, 512, 300);
+    update = touch.read_events(view, false, button, reset, lock);
+    require(!update.changed && view.zoom() == 2.5, "double tap is ignored while locked");
+    events.contact(16000, 0, 1, 42, 550);
+    events.contact(16060, 0, -1);
+    update = touch.read_events(view, false, button, reset, lock);
+    require(update.changed && !update.screenshot && view.zoom() == 1,
+            "reset still works while locked");
+    events.contact(16500, 0, 1, 980, 514);
+    events.contact(16560, 0, -1);
+    update = touch.read_events(view, false, button, reset, lock);
+    require(update.screenshot && !update.changed, "screenshot still works while locked");
+    events.contact(17000, 0, 1, 950, 60);
+    events.contact(17060, 0, -1);
+    update = touch.read_events(view, false, button, reset, lock);
+    require(update.lock_toggled && !view.locked(), "tapping the lock button unlocks");
+    events.double_tap(17500, 512, 300);
+    require(touch.read_events(view, false, button, reset, lock).changed && view.zoom() == 2.5,
+            "double tap zooms again after unlocking");
 }
 
 } // namespace

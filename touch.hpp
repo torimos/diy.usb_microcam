@@ -21,6 +21,8 @@ public:
     int screen_height() const { return screen_h_; }
     bool cycle_zoom(double x, double y);
     bool reset_zoom();
+    bool locked() const { return locked_; }
+    void toggle_lock() { locked_ = !locked_; }
 
 private:
     struct Size { double w, h; };
@@ -32,12 +34,14 @@ private:
     bool fill_;
     int camera_w_ = 1, camera_h_ = 1;
     double zoom_ = 1, x_ = 0, y_ = 0;
+    bool locked_ = false;
 };
 
 struct TouchUpdate {
     bool activity = false;
     bool changed = false;
     bool screenshot = false;
+    bool lock_toggled = false;
 };
 
 class TouchDevice {
@@ -54,7 +58,7 @@ public:
     const std::string& name() const { return name_; }
     const std::string& path() const { return path_; }
     TouchUpdate read_events(Viewport& view, bool sleeping, Rect screenshot_button = {},
-                            Rect reset_button = {});
+                            Rect reset_button = {}, Rect lock_button = {});
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -75,7 +79,7 @@ private:
 
     void resync();
     void process_report(Clock::time_point now, Viewport& view, bool sleeping, Rect screenshot_button,
-                        Rect reset_button, TouchUpdate& update);
+                        Rect reset_button, Rect lock_button, TouchUpdate& update);
     Point map(const Slot& slot, const Viewport& view) const;
     void move_contact(Point position, TouchUpdate& update);
     void block_gestures();
