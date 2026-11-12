@@ -1,0 +1,11 @@
+[Unit]
+Description=USB camera viewer
+
+[Service]
+Group=pi
+ExecStart=/usr/local/bin/usb-microcam-native --device /dev/v4l/by-id/usb-_Webcam_C170-video-index0 --touch /dev/input/by-id/usb-WaveShare_WaveShare_Touchscreen_2016-11-06-event-if00 --fixed-exposure-fps --idle 900 --screenshots /home/pi/diy.usb_microcam/screenshots
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
