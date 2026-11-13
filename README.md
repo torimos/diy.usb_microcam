@@ -74,7 +74,7 @@ The startup log shows the negotiated resolution and format. The FPS overlay show
 
 ## Start at boot without logging in
 
-The included systemd system unit starts under `multi-user.target`, so no desktop session or user login is needed. It uses the stable device links for the Logitech C170 and WaveShare panel. Check the links on the Pi and edit `ExecStart` before installing if yours differ:
+The included systemd system unit starts under `multi-user.target`, so no desktop session or user login is needed. It lets the viewer pick the first USB camera automatically and pins the WaveShare panel with its stable input link. Check the touchscreen link on the Pi and edit `ExecStart` before installing if yours differs. To force a specific camera instead, add `--device /dev/v4l/by-id/...` back to `ExecStart`:
 
 ```sh
 ls -l /dev/v4l/by-id/ /dev/input/by-id/

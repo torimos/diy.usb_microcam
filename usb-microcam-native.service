@@ -4,7 +4,7 @@ After=systemd-vconsole-setup.service
 
 [Service]
 Group=pi
-ExecStart=/usr/local/bin/usb-microcam-native --device /dev/v4l/by-id/usb-_Webcam_C170-video-index0 --touch /dev/input/by-id/usb-WaveShare_WaveShare_Touchscreen_2016-11-06-event-if00 --fixed-exposure-fps --idle 900 --screenshots /home/pi/diy.usb_microcam/screenshots
+ExecStart=/usr/local/bin/usb-microcam-native --touch /dev/input/by-id/usb-WaveShare_WaveShare_Touchscreen_2016-11-06-event-if00 --fixed-exposure-fps --idle 900 --screenshots /home/pi/diy.usb_microcam/screenshots
 Restart=on-failure
 RestartSec=3
 # The viewer detaches the text console from the framebuffer while it runs and
