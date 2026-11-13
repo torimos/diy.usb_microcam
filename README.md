@@ -42,8 +42,8 @@ If the service is already running, use `sudo systemctl stop usb-microcam-native.
 
 | Input | Action |
 | --- | --- |
-| Double tap | Cycle 1× → 2.5× → 5× → 1×, anchored at the tap |
-| Tap the lock icon (top right) | Lock or unlock zoom. While locked the icon turns amber with a closed padlock and taps on the picture are ignored; only the reset and camera icons still respond |
+| Double tap | Cycle 1× → 2.5× → 5× → 1×, anchored at the tap. Zoom starts locked, so unlock first |
+| Tap the lock icon (top right) | Lock or unlock zoom. The viewer starts locked: the icon is amber with a closed padlock and taps on the picture are ignored; only the reset and camera icons still respond |
 | Tap the reset icon (bottom left) | Return to 1× and recenter the picture |
 | Tap the camera icon (bottom right) | Save the current screen as a PNG. On success, the screen border flashes and the button shows a green checkmark. The button turns red on failure. Wait half a second between captures. |
 | No touch for five minutes by default, or 15 minutes with the boot service | Turn off the LCD backlight |

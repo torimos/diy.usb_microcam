@@ -58,7 +58,7 @@ Full-screen USB camera viewer for a Linux framebuffer and evdev touchscreen.
   --no-vt             Don't take over the virtual console and its framebuffer
   -h, --help          Show this help
 
-Double-tap to cycle zoom 1x / 2.5x / 5x.
+Double-tap to cycle zoom 1x / 2.5x / 5x. Zoom starts locked; tap the lock icon to unlock.
 Tap to wake the backlight. Ctrl+C stops the viewer.
 )";
 }
@@ -128,6 +128,7 @@ int run(const Options& opts) {
     Frame frame;
     TouchDevice touch;
     Viewport view(display.width(), display.height(), opts.fill);
+    view.set_locked(true);  // Start with zoom locked; the lock icon unlocks it.
     auto now = Clock::now();
     auto next_camera = now, next_touch = now, last_activity = now;
     auto camera_deadline = now, rate_start = now;

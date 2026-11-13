@@ -23,6 +23,7 @@ public:
     bool reset_zoom();
     bool locked() const { return locked_; }
     void toggle_lock() { locked_ = !locked_; }
+    void set_locked(bool on) { locked_ = on; }
 
 private:
     struct Size { double w, h; };
