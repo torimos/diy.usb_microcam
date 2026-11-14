@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fcntl.h>
+#include <initializer_list>
 #include <limits>
 #include <linux/fb.h>
 #include <png.h>
@@ -129,6 +131,128 @@ void write_pixel(std::uint8_t* dst, int bytes, std::uint32_t color) {
     } else {
         std::memcpy(dst, &color, sizeof(color));
     }
+}
+
+
+struct IconPoint { double x, y; };
+
+double segment_distance_sq(IconPoint p, IconPoint a, IconPoint b) {
+    const double dx = b.x - a.x, dy = b.y - a.y;
+    const double t = std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) /
+                                (dx * dx + dy * dy), 0.0, 1.0);
+    const double x = p.x - a.x - t * dx, y = p.y - a.y - t * dy;
+    return x * x + y * y;
+}
+
+bool stroke(IconPoint p, std::initializer_list<IconPoint> points, double radius = 1.45) {
+    for (auto it = points.begin() + 1; it != points.end(); ++it) {
+        if (segment_distance_sq(p, *(it - 1), *it) <= radius * radius) return true;
+    }
+    return false;
+}
+
+double rounded_rect_distance(IconPoint p, double x, double y, double w, double h, double r) {
+    const double dx = std::abs(p.x - x) - w / 2 + r;
+    const double dy = std::abs(p.y - y) - h / 2 + r;
+    const double ox = std::max(0.0, dx), oy = std::max(0.0, dy);
+    return std::sqrt(ox * ox + oy * oy) + std::min(0.0, std::max(dx, dy)) - r;
+}
+
+enum class ButtonIcon { reset, camera, locked, unlocked, saved, failed };
+
+bool icon_pixel(ButtonIcon icon, IconPoint p) {
+    switch (icon) {
+    case ButtonIcon::reset: {
+        const double dx = p.x - 30, dy = p.y - 30;
+        const double r = dx * dx + dy * dy;
+        const bool arc = r >= 16.5 * 16.5 && r <= 19.5 * 19.5 &&
+                         !(dx > 0 && dy < 0 && dy > -0.65 * dx);
+        return arc || stroke(p, {{45,16}, {45,22}, {39,22}}) ||
+               stroke(p, {{22,28}, {25,25}, {25,35}}, 1.25) ||
+               stroke(p, {{31,28}, {38,35}}, 1.2) ||
+               stroke(p, {{38,28}, {31,35}}, 1.2);
+    }
+    case ButtonIcon::camera: {
+        const double dx = p.x - 30, dy = p.y - 32;
+        const double r = dx * dx + dy * dy;
+        return (r >= 5 * 5 && r <= 8 * 8) ||
+            stroke(p, {{16,23}, {21,23}, {24,18}, {36,18}, {39,23}, {44,23}, {47,26},
+                       {47,41}, {44,44}, {16,44}, {13,41}, {13,26}, {16,23}});
+    }
+    case ButtonIcon::locked:
+    case ButtonIcon::unlocked: {
+        const bool locked = icon == ButtonIcon::locked;
+        const double cy = locked ? 23 : 21;
+        const double dx = p.x - 30, dy = p.y - cy;
+        const double r = dx * dx + dy * dy;
+        return std::abs(rounded_rect_distance(p, 30, 36, 26, 19, 3.5)) <= 1.45 ||
+               (dy <= 0 && r >= 6.5 * 6.5 && r <= 9.5 * 9.5) ||
+               stroke(p, {{22,cy}, {22,26.5}}) ||
+               stroke(p, {{38,cy}, {38,26.5 + (locked ? 0.0 : -3.5)}});
+    }
+    case ButtonIcon::saved:
+        return stroke(p, {{19,31}, {27,39}, {42,23}}, 1.8);
+    case ButtonIcon::failed:
+        return stroke(p, {{22,22}, {38,38}}, 1.7) || stroke(p, {{22,38}, {38,22}}, 1.7);
+    }
+    return false;
+}
+
+struct ButtonRow { int start, width; };
+
+const std::array<ButtonRow, button_size>& button_rows() {
+    static const auto rows = [] {
+        std::array<ButtonRow, button_size> result{};
+        for (int y = 0; y < button_size; ++y) {
+            int x = 0;
+            while (x < button_size / 2 &&
+                   rounded_rect_distance({x + 0.5, y + 0.5}, 30, 30, 60, 60, 13) > 0) ++x;
+            result[y] = {x, button_size - 2 * x};
+        }
+        return result;
+    }();
+    return rows;
+}
+
+template <typename Pack>
+void render_button(std::vector<std::uint8_t>& pixels, int pixel_bytes, ButtonIcon icon, Pack pack) {
+    const unsigned accent = icon == ButtonIcon::locked ? 0xffb62f :
+                            icon == ButtonIcon::saved ? 0x75efa8 :
+                            icon == ButtonIcon::failed ? 0xff8383 : 0xf4f7fa;
+    const unsigned border = icon == ButtonIcon::locked || icon == ButtonIcon::saved ||
+                            icon == ButtonIcon::failed ? accent : 0x86939d;
+    const unsigned background = icon == ButtonIcon::saved ? 0x16372c :
+                                icon == ButtonIcon::failed ? 0x3f2027 : 0x22272c;
+    pixels.resize(button_size * button_size * pixel_bytes);
+    constexpr int samples = 4;
+    for (int y = 0; y < button_size; ++y) {
+        const auto span = button_rows()[y];
+        for (int x = span.start; x < span.start + span.width; ++x) {
+            unsigned red = 0, green = 0, blue = 0;
+            for (int sy = 0; sy < samples; ++sy) {
+                for (int sx = 0; sx < samples; ++sx) {
+                    const IconPoint p{x + (sx + 0.5) / samples, y + (sy + 0.5) / samples};
+                    const auto edge = rounded_rect_distance(p, 30, 30, 60, 60, 13);
+                    const auto color = icon_pixel(icon, p) ? accent : edge > -1.4 ? border : background;
+                    red += (color >> 16) & 255;
+                    green += (color >> 8) & 255;
+                    blue += color & 255;
+                }
+            }
+            constexpr unsigned count = samples * samples;
+            const auto color = (red / count << 16) | (green / count << 8) | (blue / count);
+            write_pixel(pixels.data() + (y * button_size + x) * pixel_bytes, pixel_bytes, pack(color));
+        }
+    }
+}
+
+void copy_button_row(std::uint8_t* row, const std::vector<std::uint8_t>& pixels,
+                     Rect button, int y, int pixel_bytes) {
+    const int local_y = y - button.y;
+    const auto span = button_rows()[local_y];
+    const auto byte_offset = static_cast<std::size_t>(local_y * button_size + span.start) * pixel_bytes;
+    std::memcpy(row + (button.x + span.start) * pixel_bytes, pixels.data() + byte_offset,
+                static_cast<std::size_t>(span.width) * pixel_bytes);
 }
 
 void nearest_axis(std::vector<int>& lookup, int source, int dest) {
@@ -352,19 +476,10 @@ void Framebuffer::draw(const std::uint32_t* pixels, int frame_width, int frame_h
                 }
             }
             if (button_row) {
-                const auto bytes = static_cast<std::size_t>(button.w) * pixel_bytes_;
-                std::memcpy(row + button.x * pixel_bytes_,
-                            button_pixels_.data() + (y - button.y) * bytes, bytes);
-                if (reset.w) {
-                    std::memcpy(row + reset.x * pixel_bytes_,
-                                reset_pixels_.data() + (y - reset.y) * bytes, bytes);
-                }
+                copy_button_row(row, button_pixels_, button, y, pixel_bytes_);
+                if (reset.w) copy_button_row(row, reset_pixels_, reset, y, pixel_bytes_);
             }
-            if (lock_row) {
-                const auto bytes = static_cast<std::size_t>(lock.w) * pixel_bytes_;
-                std::memcpy(row + lock.x * pixel_bytes_,
-                            lock_pixels_.data() + (y - lock.y) * bytes, bytes);
-            }
+            if (lock_row) copy_button_row(row, lock_pixels_, lock, y, pixel_bytes_);
             if (capture_flash) {
                 if (y < flash_border || y >= height_ - flash_border) {
                     for (int x = 0; x < width_; ++x) {
@@ -461,79 +576,24 @@ Rect Framebuffer::lock_touch_area() const noexcept {
 
 void Framebuffer::prepare_reset_button() {
     if (!reset_pixels_.empty()) return;
-    const auto background = pack(0x18222c);
-    const auto foreground = pack(0xffffff);
-    const auto border = pack(0x80909c);
-    reset_pixels_.resize(button_size * button_size * pixel_bytes_);
-    for (int y = 0; y < button_size; ++y) {
-        for (int x = 0; x < button_size; ++x) {
-            const bool edge = x == 0 || y == 0 || x == button_size - 1 || y == button_size - 1;
-            const int dx = x - 30, dy = y - 31;
-            const int radius_sq = dx * dx + dy * dy;
-            const bool arc = radius_sq >= 13 * 13 && radius_sq <= 17 * 17 && (x >= 30 || y >= 33);
-            const bool arrow = y >= 22 && y <= 34 && 2 * std::abs(x - 15) <= 35 - y;
-            write_pixel(reset_pixels_.data() + (y * button_size + x) * pixel_bytes_,
-                        pixel_bytes_, arc || arrow ? foreground : edge ? border : background);
-        }
-    }
+    render_button(reset_pixels_, pixel_bytes_, ButtonIcon::reset,
+                  [this](auto color) { return pack(color); });
 }
 
 void Framebuffer::prepare_lock_button(bool locked) {
     const int state = locked ? 1 : 0;
     if (!lock_pixels_.empty() && lock_prepared_ == state) return;
     lock_prepared_ = state;
-    // Amber background and bright border highlight the active (locked) state.
-    const auto background = pack(locked ? 0xe0a030 : 0x18222c);
-    const auto foreground = pack(0xffffff);
-    const auto border = pack(locked ? 0xffd24a : 0x80909c);
-    lock_pixels_.resize(button_size * button_size * pixel_bytes_);
-    // The shackle sits centered (closed) when locked and shifts off the body
-    // to the left (open) when unlocked.
-    const int shackle_cx = locked ? 30 : 26;
-    const int shackle_cy = locked ? 31 : 27;
-    for (int y = 0; y < button_size; ++y) {
-        for (int x = 0; x < button_size; ++x) {
-            const bool edge = x == 0 || y == 0 || x == button_size - 1 || y == button_size - 1;
-            const bool body = x >= 19 && x < 41 && y >= 30 && y < 47;
-            const int sdx = x - shackle_cx, sdy = y - shackle_cy;
-            const int sr = sdx * sdx + sdy * sdy;
-            const bool shackle = y <= shackle_cy && sr >= 8 * 8 && sr <= 12 * 12;
-            const int kdx = x - 30, kdy = y - 36;
-            const bool keyhole = locked && body &&
-                                 ((kdx * kdx + kdy * kdy) <= 2 * 2 ||
-                                  (kdx >= -1 && kdx <= 1 && kdy >= 0 && kdy <= 5));
-            std::uint32_t color = edge ? border : background;
-            if (keyhole) color = background;
-            else if (shackle || body) color = foreground;
-            write_pixel(lock_pixels_.data() + (y * button_size + x) * pixel_bytes_,
-                        pixel_bytes_, color);
-        }
-    }
+    render_button(lock_pixels_, pixel_bytes_, locked ? ButtonIcon::locked : ButtonIcon::unlocked,
+                  [this](auto color) { return pack(color); });
 }
 
 void Framebuffer::prepare_button(CaptureFeedback feedback) {
     if (!button_pixels_.empty() && feedback == button_feedback_) return;
     button_feedback_ = feedback;
-    const auto background = pack(feedback == CaptureFeedback::saved ? 0x176842 :
-                                 feedback == CaptureFeedback::failed ? 0x982d2d : 0x18222c);
-    const auto foreground = pack(0xffffff);
-    const auto border = pack(0x80909c);
-    button_pixels_.resize(button_size * button_size * pixel_bytes_);
-    for (int y = 0; y < button_size; ++y) {
-        for (int x = 0; x < button_size; ++x) {
-            const bool edge = x == 0 || y == 0 || x == button_size - 1 || y == button_size - 1;
-            const int lx = x - 30, ly = y - 32;
-            const int lens = lx * lx + ly * ly;
-            const bool body = x >= 13 && x < 47 && y >= 22 && y < 43;
-            const bool top = x >= 23 && x < 37 && y >= 17 && y < 22;
-            const bool camera = top || (body && (lens >= 64 || lens <= 16));
-            const bool check = (x >= 14 && x <= 28 && std::abs(y - x - 14) <= 3) ||
-                               (x >= 27 && x <= 46 && std::abs(y + x - 69) <= 3);
-            const bool symbol = feedback == CaptureFeedback::saved ? check : camera;
-            write_pixel(button_pixels_.data() + (y * button_size + x) * pixel_bytes_,
-                        pixel_bytes_, symbol ? foreground : edge ? border : background);
-        }
-    }
+    const auto icon = feedback == CaptureFeedback::saved ? ButtonIcon::saved :
+                      feedback == CaptureFeedback::failed ? ButtonIcon::failed : ButtonIcon::camera;
+    render_button(button_pixels_, pixel_bytes_, icon, [this](auto color) { return pack(color); });
 }
 
 void Framebuffer::save_screenshot(const std::string& directory, std::string& path) const {
