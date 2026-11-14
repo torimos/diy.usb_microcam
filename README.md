@@ -52,6 +52,14 @@ If the service is already running, use `sudo systemctl stop usb-microcam-native.
 
 The app uses the same active-low BCM GPIO 26 wiring as `backlight.py`, via line 26 on `/dev/gpiochip0`. Use `--gpio-chip` or `--gpio-line` if your mapping differs. `--no-backlight` leaves the GPIO alone; `--idle 0` keeps the backlight on. If the touch device or GPIO line is unavailable, video still works and the app skips idle blanking.
 
+To troubleshoot an unexpected wake, check the viewer journal:
+
+```sh
+sudo journalctl -b -u usb-microcam-native.service -g 'backlight|wake input' -o short-iso
+```
+
+The log shows the idle timeout, when the GPIO was switched off or on, and what caused the wake. A `wake input` entry records the contact reported by the touchscreen even if it did not become a tap.
+
 ## Camera controls and performance
 
 In dim light, the Logitech C170 can lower its frame rate to allow longer exposures. The live adjustment we used on the Pi was:

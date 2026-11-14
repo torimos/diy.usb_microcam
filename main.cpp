@@ -152,6 +152,12 @@ int run(const Options& opts) {
         std::cerr << "[backlight] " << error << "; continuing without backlight control\n";
         idle_enabled = false;
     }
+    if (idle_enabled) {
+        std::cerr << "[backlight] on at startup: " << opts.gpio_chip << " line " << opts.gpio_line
+                  << ", idle_timeout_s=" << idle_timeout.count() << " (0=off)\n";
+    } else if (!opts.backlight) {
+        std::cerr << "[backlight] GPIO control disabled\n";
+    }
     std::cerr << "[display] " << opts.framebuffer << ' ' << display.width() << 'x' << display.height() << '\n';
 
     Camera camera;
@@ -161,7 +167,7 @@ int run(const Options& opts) {
     view.set_locked(true);  // Start with zoom locked; the lock icon unlocks it.
     auto now = Clock::now();
     auto next_camera = now, next_touch = now, last_activity = now;
-    auto camera_deadline = now, rate_start = now;
+    auto camera_deadline = now, rate_start = now, asleep_since = now;
     auto feedback_until = now, flash_until = now, next_screenshot = now;
     auto feedback = Framebuffer::CaptureFeedback::ready;
     bool capture_flash = false;
@@ -177,11 +183,16 @@ int run(const Options& opts) {
         shown_frames = 0;
         fps = 0;
     };
-    const auto wake = [&] {
+    const auto wake = [&](std::string_view reason) {
         if (!asleep) return;
         if (!backlight.set(true, error)) {
-            std::cerr << "[backlight] could not turn on: " << error << '\n';
+            std::cerr << "[backlight] could not turn on: reason=" << reason << ", error=" << error << '\n';
             idle_enabled = false;
+        } else {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                Clock::now() - asleep_since);
+            std::cerr << "[backlight] on: reason=" << reason << ", asleep_ms=" << elapsed.count()
+                      << ", idle_timeout_s=" << idle_timeout.count() << '\n';
         }
         asleep = false;
         redraw = true;
@@ -238,6 +249,10 @@ int run(const Options& opts) {
             touch.fd() >= 0 && now - last_activity >= idle_timeout) {
             if (backlight.set(false, error)) {
                 asleep = true;
+                asleep_since = now;
+                const auto idle = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_activity);
+                std::cerr << "[backlight] off: reason=idle timeout, idle_ms=" << idle.count()
+                          << ", idle_timeout_s=" << idle_timeout.count() << '\n';
             } else {
                 std::cerr << "[backlight] could not turn off: " << error << '\n';
                 idle_enabled = false;
@@ -345,7 +360,7 @@ int run(const Options& opts) {
                 }
                 if (update.activity) {
                     last_activity = Clock::now();
-                    wake();
+                    wake("touch activity");
                 }
                 redraw = redraw || update.changed;
             }
@@ -353,7 +368,7 @@ int run(const Options& opts) {
                 touch.close();
                 std::cerr << "[touch] disconnected; will retry\n";
                 next_touch = Clock::now() + 2s;
-                wake();
+                wake("touchscreen disconnected");
             }
         }
         if (fds[2].revents & gone) {
@@ -373,6 +388,7 @@ int run(const Options& opts) {
             }
         }
     }
+    if (asleep) wake("viewer shutdown");
     display.clear();
     return 0;
 }

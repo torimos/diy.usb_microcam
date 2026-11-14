@@ -330,6 +330,16 @@ void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sle
             current = i;
         }
     }
+    if (sleeping && active != 0) {
+        const auto& slot = slots_[current];
+        std::cerr << "[touch] wake input: contacts=" << active << ", slot=" << current
+                  << ", tracking_id=" << slot.id;
+        if (slot.have_x && slot.have_y) {
+            const auto p = map(slot, view);
+            std::cerr << ", position=" << p.x << ',' << p.y;
+        }
+        std::cerr << '\n';
+    }
     if (active > 1 || (active != 0 && sleeping)) {
         update.activity = true;
         if (active > 1) {
