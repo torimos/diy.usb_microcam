@@ -39,13 +39,19 @@ private:
     bool locked_ = false;
 };
 
+struct DialogTap {
+    double start_x, start_y, x, y;
+    bool inside(Rect rect) const { return rect.contains(start_x, start_y) && rect.contains(x, y); }
+};
+
 struct TouchUpdate {
     bool activity = false;
     bool changed = false;
     bool screenshot = false;
     bool lock_toggled = false;
     bool settings = false;
-    std::optional<std::pair<double, double>> settings_tap;
+    bool power = false;
+    std::optional<DialogTap> dialog_tap;
 };
 
 class TouchDevice {
@@ -63,7 +69,8 @@ public:
     const std::string& path() const { return path_; }
     TouchUpdate read_events(Viewport& view, bool sleeping, Rect screenshot_button = {},
                             Rect reset_button = {}, Rect lock_button = {},
-                            Rect settings_button = {}, bool settings_open = false);
+                            Rect settings_button = {}, bool dialog_open = false, Rect power_button = {});
+    void discard_current_touch();
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -85,7 +92,7 @@ private:
     void resync();
     void process_report(Clock::time_point now, Viewport& view, bool sleeping, Rect screenshot_button,
                         Rect reset_button, Rect lock_button, Rect settings_button,
-                        bool settings_open, TouchUpdate& update);
+                        bool dialog_open, Rect power_button, TouchUpdate& update);
     Point map(const Slot& slot, const Viewport& view) const;
     void move_contact(Point position, TouchUpdate& update);
     void block_gestures();

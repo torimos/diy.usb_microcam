@@ -15,6 +15,10 @@ struct SettingsLayout {
     Rect panel, minus, plus, off, done;
 };
 
+struct PowerLayout {
+    Rect panel, cancel, shutdown;
+};
+
 class Framebuffer {
 public:
     enum class CaptureFeedback { ready, saved, failed };
@@ -34,11 +38,14 @@ public:
     void draw(const std::uint32_t* pixels, int frame_width, int frame_height,
               int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
               std::string_view status, CaptureFeedback feedback, bool capture_flash,
-              bool zoom_locked = false);
+              bool zoom_locked = false, bool power_enabled = false);
     Rect screenshot_touch_area() const noexcept;
     Rect reset_touch_area() const noexcept;
     Rect lock_touch_area() const noexcept;
-    Rect settings_touch_area() const noexcept;
+    Rect settings_touch_area(bool power_enabled = false) const noexcept;
+    Rect power_touch_area() const noexcept;
+    PowerLayout power_layout() const noexcept;
+    void draw_power_prompt(int seconds_left, bool failed);
     SettingsLayout settings_layout() const noexcept;
     void draw_settings(int minutes, bool save_failed);
     void save_screenshot(const std::string& directory, std::string& path) const;
@@ -57,7 +64,10 @@ private:
     Rect screenshot_button() const noexcept;
     Rect reset_button() const noexcept;
     Rect lock_button() const noexcept;
-    Rect settings_button() const noexcept;
+    Rect settings_button(bool power_enabled = false) const noexcept;
+    Rect power_button() const noexcept;
+    void fill_panel_rect(Rect rect, std::uint32_t rgb);
+    void draw_panel_label(Rect rect, std::string_view text, std::uint32_t rgb);
     void prepare_button(CaptureFeedback feedback);
     void prepare_reset_button();
     void prepare_lock_button(bool locked);
@@ -87,7 +97,7 @@ private:
     std::vector<std::vector<StatusPixel>> status_rows_;
     std::vector<std::uint8_t> button_pixels_;
     std::vector<std::uint8_t> reset_pixels_;
-    std::vector<std::uint8_t> lock_pixels_, settings_pixels_;
+    std::vector<std::uint8_t> lock_pixels_, settings_pixels_, power_pixels_;
     CaptureFeedback button_feedback_ = CaptureFeedback::ready;
     int lock_prepared_ = -1;  // -1 unset, 0 unlocked, 1 locked
     bool flash_visible_ = false;

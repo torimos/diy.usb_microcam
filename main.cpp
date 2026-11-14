@@ -14,9 +14,13 @@
 #include <iostream>
 #include <unistd.h>
 #include <poll.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+extern char** environ;
 
 namespace {
 
@@ -34,6 +38,7 @@ struct Options {
     std::string gpio_chip = "/dev/gpiochip0";
     unsigned gpio_line = 26;
     std::chrono::seconds idle{300};
+    bool power_enabled = false;
     bool backlight = true;
     bool vt = true;
     bool fill = false;
@@ -57,6 +62,7 @@ Full-screen USB camera viewer for a Linux framebuffer and evdev touchscreen.
   --settings-file PATH File used to save the screen timeout
   --gpio-chip PATH    GPIO chip (default: /dev/gpiochip0)
   --gpio-line N       Active-low line offset (default: 26, BCM GPIO 26 on Pi 3)
+  --allow-shutdown    Show a power button that can shut down the Pi
   --no-backlight      Leave the GPIO untouched
   --fill              Fill the screen by cropping the picture
   --no-osd            Hide zoom, camera and FPS overlay
@@ -106,6 +112,7 @@ Options parse(int argc, char* argv[], bool& help) {
         else if (option == "--idle") opts.idle = std::chrono::seconds(number(next(), 0, 86400, option));
         else if (option == "--gpio-chip") opts.gpio_chip = next();
         else if (option == "--gpio-line") opts.gpio_line = number(next(), 0, 65535, option);
+        else if (option == "--allow-shutdown") opts.power_enabled = true;
         else if (option == "--no-backlight") opts.backlight = false;
         else if (option == "--fill") opts.fill = true;
         else if (option == "--no-osd") opts.osd = false;
@@ -136,6 +143,26 @@ bool save_timeout(const std::string& path, int minutes) {
         ::rename(temporary.c_str(), path.c_str()) == 0) return true;
     ::unlink(temporary.c_str());
     return false;
+}
+
+bool request_poweroff() {
+    char program[] = "/usr/bin/systemctl";
+    char nonblocking[] = "--no-block";
+    char no_prompt[] = "--no-ask-password";
+    char action[] = "poweroff";
+    char* const args[] = {program, nonblocking, no_prompt, action, nullptr};
+    pid_t child;
+    const int error = ::posix_spawn(&child, program, nullptr, nullptr, args, environ);
+    if (error != 0) {
+        std::cerr << "[power] could not start systemctl: " << std::strerror(error) << '\n';
+        return false;
+    }
+    int status = 0;
+    pid_t waited;
+    do {
+        waited = ::waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    return waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 int run(const Options& opts) {
@@ -173,6 +200,10 @@ int run(const Options& opts) {
     bool capture_flash = false;
     bool settings_open = false, settings_save_failed = false;
     int settings_minutes = 0;
+    auto power_deadline = now;
+    bool power_open = false;
+    bool power_failed = false;
+    int displayed_seconds = 0;
     bool asleep = false, redraw = true, have_frame = false, fresh_frame = false, touch_missing = false;
     unsigned shown_frames = 0;
     double fps = 0;
@@ -209,6 +240,19 @@ int run(const Options& opts) {
 
     for (;;) {
         now = Clock::now();
+        if (power_open && now >= power_deadline) {
+            power_open = false;
+            touch.discard_current_touch();
+            std::cerr << "[power] confirmation expired\n";
+            redraw = true;
+        }
+        if (power_open) {
+            const int seconds_left = std::chrono::ceil<std::chrono::seconds>(power_deadline - now).count();
+            if (displayed_seconds != seconds_left) {
+                displayed_seconds = seconds_left;
+                redraw = true;
+            }
+        }
         if (capture_flash && now >= flash_until) {
             capture_flash = false;
             redraw = true;
@@ -245,7 +289,7 @@ int run(const Options& opts) {
         }
         now = Clock::now();
         if (camera.fd() >= 0 && now >= camera_deadline) lose_camera("no usable frames for 5 seconds");
-        if (!asleep && !settings_open && idle_enabled && idle_timeout > 0s &&
+        if (!asleep && !settings_open && !power_open && idle_enabled && idle_timeout > 0s &&
             touch.fd() >= 0 && now - last_activity >= idle_timeout) {
             if (backlight.set(false, error)) {
                 asleep = true;
@@ -260,7 +304,9 @@ int run(const Options& opts) {
         }
 
         if (!asleep && redraw) {
-            if (settings_open) {
+            if (power_open) {
+                display.draw_power_prompt(displayed_seconds, power_failed);
+            } else if (settings_open) {
                 display.draw_settings(settings_minutes, settings_save_failed);
             } else if (have_frame) {
                 const auto src = view.source(), dst = view.destination();
@@ -280,7 +326,7 @@ int run(const Options& opts) {
                 }
                 display.draw(frame.pixels.data(), frame.width, frame.height,
                              src.x, src.y, src.w, src.h, dst.x, dst.y, dst.w, dst.h,
-                             status, feedback, capture_flash, view.locked());
+                             status, feedback, capture_flash, view.locked(), opts.power_enabled);
             } else {
                 display.message(camera.fd() < 0 ? "NO CAMERA - WAITING" : "WAITING FOR VIDEO");
             }
@@ -288,10 +334,12 @@ int run(const Options& opts) {
         }
 
         auto deadline = camera.fd() < 0 ? next_camera : camera_deadline;
+        if (power_open) deadline = std::min(deadline, power_deadline -
+            std::chrono::seconds(displayed_seconds - 1));
         if (feedback != Framebuffer::CaptureFeedback::ready) deadline = std::min(deadline, feedback_until);
         if (capture_flash) deadline = std::min(deadline, flash_until);
         if (touch.fd() < 0) deadline = std::min(deadline, next_touch);
-        else if (!asleep && !settings_open && idle_enabled && idle_timeout > 0s) {
+        else if (!asleep && !settings_open && !power_open && idle_enabled && idle_timeout > 0s) {
             deadline = std::min(deadline, last_activity + idle_timeout);
         }
         const auto wait = std::chrono::ceil<std::chrono::milliseconds>(deadline - Clock::now());
@@ -306,20 +354,48 @@ int run(const Options& opts) {
         if (fds[1].revents & (POLLIN | gone)) {
             if (fds[1].revents & POLLIN) {
                 const double zoom_before = view.zoom();
-                const bool buttons_visible = have_frame && !asleep && !settings_open;
+                const bool dialog_open = settings_open || power_open;
+                const bool buttons_visible = have_frame && !asleep && !dialog_open;
                 const auto update = touch.read_events(view, asleep,
                     buttons_visible ? display.screenshot_touch_area() : Rect{},
                     buttons_visible ? display.reset_touch_area() : Rect{},
                     buttons_visible ? display.lock_touch_area() : Rect{},
-                    buttons_visible ? display.settings_touch_area() : Rect{}, settings_open);
-                if (update.settings) {
+                    buttons_visible ? display.settings_touch_area(opts.power_enabled) : Rect{},
+                    dialog_open, buttons_visible && opts.power_enabled ? display.power_touch_area() : Rect{});
+                if (update.power) {
+                    touch.discard_current_touch();
+                    power_deadline = Clock::now() + 15s;
+                    power_open = true;
+                    power_failed = false;
+                    std::cerr << "[power] confirmation opened\n";
+                    redraw = true;
+                } else if (power_open && update.dialog_tap) {
+                    const auto layout = display.power_layout();
+                    const auto& tap = *update.dialog_tap;
+                    if (Clock::now() >= power_deadline || touch.fd() < 0 || (fds[1].revents & gone)) {
+                        // Expiration and disconnect are handled without processing the tap.
+                    } else if (tap.inside(layout.cancel) || !layout.panel.contains(tap.x, tap.y)) {
+                        power_open = false;
+                        touch.discard_current_touch();
+                        std::cerr << "[power] confirmation canceled\n";
+                    } else if (tap.inside(layout.shutdown)) {
+                        std::cerr << "[power] shutdown confirmed\n";
+                        if (request_poweroff()) {
+                            display.message("SHUTTING DOWN");
+                            return 0;
+                        }
+                        std::cerr << "[power] shutdown request failed\n";
+                        power_failed = true;
+                    }
+                    redraw = true;
+                } else if (update.settings) {
                     settings_open = true;
                     settings_save_failed = false;
                     settings_minutes = std::clamp<int>(
                         std::chrono::ceil<std::chrono::minutes>(idle_timeout).count(), 0, 30);
                     redraw = true;
-                } else if (update.settings_tap) {
-                    const auto [x, y] = *update.settings_tap;
+                } else if (settings_open && update.dialog_tap) {
+                    const auto x = update.dialog_tap->x, y = update.dialog_tap->y;
                     const auto layout = display.settings_layout();
                     if (layout.minus.contains(x, y)) settings_minutes = std::max(0, settings_minutes - 1);
                     else if (layout.plus.contains(x, y)) settings_minutes = std::min(30, settings_minutes + 1);
@@ -366,6 +442,11 @@ int run(const Options& opts) {
             }
             if (touch.fd() < 0 || (fds[1].revents & gone)) {
                 touch.close();
+                if (power_open) {
+                    power_open = false;
+                    redraw = true;
+                    std::cerr << "[power] confirmation canceled: touchscreen disconnected\n";
+                }
                 std::cerr << "[touch] disconnected; will retry\n";
                 next_touch = Clock::now() + 2s;
                 wake("touchscreen disconnected");
@@ -375,7 +456,7 @@ int run(const Options& opts) {
             lose_camera("device disconnected or stopped streaming");
         } else if (fds[2].revents & POLLIN) {
             error.clear();
-            const auto result = camera.latest(frame, !asleep && !settings_open, error);
+            const auto result = camera.latest(frame, !asleep && !settings_open && !power_open, error);
             if (result == Camera::Read::disconnected) lose_camera(error);
             else if (result == Camera::Read::frame) {
                 camera_deadline = Clock::now() + 5s;
@@ -383,7 +464,7 @@ int run(const Options& opts) {
                 have_frame = true;
                 fresh_frame = true;
                 redraw = true;
-            } else if (asleep || settings_open) {
+            } else if (asleep || settings_open || power_open) {
                 camera_deadline = Clock::now() + 5s;
             }
         }

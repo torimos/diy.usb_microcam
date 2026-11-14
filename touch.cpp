@@ -243,7 +243,7 @@ void TouchDevice::resync() {
 }
 
 TouchUpdate TouchDevice::read_events(Viewport& view, bool sleeping, Rect screenshot_button, Rect reset_button,
-                                     Rect lock_button, Rect settings_button, bool settings_open) {
+                                     Rect lock_button, Rect settings_button, bool dialog_open, Rect power_button) {
     TouchUpdate update;
     if (fd_ < 0) return update;
 
@@ -274,7 +274,7 @@ TouchUpdate TouchDevice::read_events(Viewport& view, bool sleeping, Rect screens
                     now = Clock::time_point(duration_cast<Clock::duration>(stamp));
                 }
                 process_report(now, view, sleeping && !update.activity, screenshot_button, reset_button,
-                               lock_button, settings_button, settings_open, update);
+                               lock_button, settings_button, dialog_open, power_button, update);
                 continue;
             }
             if (dropped_) continue;
@@ -312,6 +312,11 @@ TouchDevice::Point TouchDevice::map(const Slot& slot, const Viewport& view) cons
     return {scale(slot.x, x_axis_, view.screen_width()), scale(slot.y, y_axis_, view.screen_height())};
 }
 
+void TouchDevice::discard_current_touch() {
+    last_tap_.reset();
+    if (contact_) block_gestures();
+}
+
 void TouchDevice::block_gestures() {
     blocked_ = true;
     contact_.reset();
@@ -320,7 +325,7 @@ void TouchDevice::block_gestures() {
 
 void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sleeping, Rect screenshot_button,
                                  Rect reset_button, Rect lock_button, Rect settings_button,
-                                 bool settings_open, TouchUpdate& update) {
+                                 bool dialog_open, Rect power_button, TouchUpdate& update) {
     unsigned active = 0, current = 0;
     for (unsigned i = 0; i < slots_.size(); ++i) {
         // This WaveShare panel reports each physical touch in slots 0 and 1.
@@ -404,11 +409,18 @@ void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sle
     const auto point = released.position;
     const bool button_tap = duration <= max_button_tap_time &&
         released.max_displacement_sq <= max_button_displacement * max_button_displacement;
-    if (settings_open || update.settings) {
+    if (dialog_open || update.settings || update.power) {
         last_tap_.reset();
-        if (settings_open && button_tap && !update.settings_tap) {
-            update.settings_tap.emplace(point.x, point.y);
+        if (dialog_open && button_tap && !update.dialog_tap) {
+            update.dialog_tap = DialogTap{released.start.x, released.start.y, point.x, point.y};
         }
+        return;
+    }
+    const bool power_start = power_button.contains(released.start.x, released.start.y);
+    const bool power_end = power_button.contains(point.x, point.y);
+    if (power_start || power_end) {
+        last_tap_.reset();
+        if (button_tap && power_start && power_end) update.power = true;
         return;
     }
     const bool gear_start = settings_button.contains(released.start.x, released.start.y);

@@ -46,7 +46,8 @@ If the service is already running, use `sudo systemctl stop usb-microcam-native.
 | Tap the lock icon (top right) | Lock or unlock zoom. The viewer starts locked: the icon is amber with a closed padlock and taps on the picture are ignored; only the reset and camera icons still respond |
 | Tap the reset icon (bottom left) | Return to 1× and recenter the picture |
 | Tap the camera icon (bottom right) | Save the current screen as a PNG. On success, the screen border flashes and the button shows a green checkmark. The button turns red on failure. Wait half a second between captures. |
-| Tap the gear below the FPS display | Set the screen timeout to Off or 1–30 minutes and tap Done to save. Tap outside the panel to cancel |
+| Tap the power icon above the settings gear | Open a 15-second shutdown prompt. Tap Shut Down to power off the Pi or Cancel to return to the viewer. The boot service enables this control with `--allow-shutdown`. |
+| Tap the settings gear on the left | Set the screen timeout to Off or 1–30 minutes and tap Done to save. Tap outside the panel to cancel |
 | No touch for the configured timeout | Turn off the LCD backlight |
 | Touch while the backlight is off | Wake the display |
 
