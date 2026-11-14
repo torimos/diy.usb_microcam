@@ -60,6 +60,8 @@ sudo journalctl -b -u usb-microcam-native.service -g 'backlight|wake input' -o s
 
 The log shows the idle timeout, when the GPIO was switched off or on, and what caused the wake. A `wake input` entry records the contact reported by the touchscreen even if it did not become a tap.
 
+The viewer ignores new contacts in the bottom 10 pixels on WaveShare panels to prevent false touches from resetting the idle timer or waking the display.
+
 ## Camera controls and performance
 
 In dim light, the Logitech C170 can lower its frame rate to allow longer exposures. The live adjustment we used on the Pi was:

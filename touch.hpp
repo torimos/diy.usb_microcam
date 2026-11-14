@@ -97,6 +97,7 @@ private:
     bool blocked_ = false;
     Axis x_axis_, y_axis_;
     int current_slot_ = 0;
+    int ignored_edge_id_ = -1;
     std::vector<Slot> slots_;
     std::optional<Contact> contact_;
     std::optional<Tap> last_tap_;

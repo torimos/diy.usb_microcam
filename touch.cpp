@@ -186,6 +186,7 @@ void TouchDevice::close() {
     path_.clear();
     name_.clear();
     dropped_ = blocked_ = false;
+    ignored_edge_id_ = -1;
     slots_.clear();
     contact_.reset();
     last_tap_.reset();
@@ -196,6 +197,7 @@ void TouchDevice::resync() {
     // Query the kernel state and wait for the current gesture to end.
     for (auto& slot : slots_) slot = {};
     current_slot_ = 0;
+    ignored_edge_id_ = -1;
     if (multitouch_) {
         input_absinfo slot{};
         if (ioctl(fd_, EVIOCGABS(ABS_MT_SLOT), &slot) == 0 && slot.value >= 0 &&
@@ -329,6 +331,23 @@ void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sle
             ++active;
             current = i;
         }
+    }
+    // This WaveShare reports spurious new contacts along the bottom edge.
+    // Ignore that tracking ID through release, before it can reset idle or wake.
+    if (primary_slot_only_) {
+        const auto& slot = slots_[0];
+        if (slot.id != ignored_edge_id_) {
+            ignored_edge_id_ = -1;
+            if (slot.id >= 0 && !contact_ && slot.have_x && slot.have_y) {
+                const auto p = map(slot, view);
+                if (p.y >= view.screen_height() - 10) {
+                    ignored_edge_id_ = slot.id;
+                    std::cerr << "[touch] ignored bottom-edge contact: tracking_id=" << slot.id
+                              << ", position=" << p.x << ',' << p.y << '\n';
+                }
+            }
+        }
+        if (ignored_edge_id_ >= 0) active = 0;
     }
     if (sleeping && active != 0) {
         const auto& slot = slots_[current];
