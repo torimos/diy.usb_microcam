@@ -67,6 +67,7 @@ constexpr Glyph glyph(char ch) {
     case '.': return {0,0,0,0,0,6,6};
     case ':': return {0,6,6,0,6,6,0};
     case '-': return {0,0,0,31,0,0,0};
+    case '+': return {0,4,4,31,4,4,0};
     case '_': return {0,0,0,0,0,0,31};
     case '/': return {1,1,2,4,8,16,16};
     case '(': return {2,4,8,8,8,4,2};
@@ -158,7 +159,7 @@ double rounded_rect_distance(IconPoint p, double x, double y, double w, double h
     return std::sqrt(ox * ox + oy * oy) + std::min(0.0, std::max(dx, dy)) - r;
 }
 
-enum class ButtonIcon { reset, camera, locked, unlocked, saved, failed };
+enum class ButtonIcon { reset, camera, locked, unlocked, saved, failed, settings };
 
 bool icon_pixel(ButtonIcon icon, IconPoint p) {
     switch (icon) {
@@ -192,6 +193,13 @@ bool icon_pixel(ButtonIcon icon, IconPoint p) {
     }
     case ButtonIcon::saved:
         return stroke(p, {{19,31}, {27,39}, {42,23}}, 1.8);
+    case ButtonIcon::settings: {
+        const double dx = p.x - 30, dy = p.y - 30;
+        const double radius = std::sqrt(dx * dx + dy * dy);
+        const double tooth = std::cos(8 * std::atan2(dy, dx));
+        return std::abs(radius - 5.5) <= 1.35 ||
+               std::abs(radius - (13 + 2.6 * std::max(0.0, tooth))) <= 1.45;
+    }
     case ButtonIcon::failed:
         return stroke(p, {{22,22}, {38,38}}, 1.7) || stroke(p, {{22,38}, {38,22}}, 1.7);
     }
@@ -432,16 +440,21 @@ void Framebuffer::draw(const std::uint32_t* pixels, int frame_width, int frame_h
     if (reset.w) prepare_reset_button();
     const auto lock = lock_button();
     if (lock.w) prepare_lock_button(zoom_locked);
+    const auto gear = settings_button();
+    if (gear.w && settings_pixels_.empty()) {
+        render_button(settings_pixels_, pixel_bytes_, ButtonIcon::settings,
+                      [this](auto color) { return pack(color); });
+    }
     const bool paint_status = had_status || !status_text_.empty();
     const bool repaint_border = flash_visible_ || capture_flash;
     flash_visible_ = capture_flash;
     const auto flash_color = capture_flash ? pack(0xffffff) : 0;
     const int first_y = repaint_border ? 0 :
         std::min({dy, paint_status ? status_margin : dy, button.w ? button.y : dy,
-                  lock.w ? lock.y : dy});
+                  lock.w ? lock.y : dy, gear.w ? gear.y : dy});
     const int last_y = repaint_border ? height_ :
         std::max({dy + dh, paint_status ? std::min(height_, status_margin + status_height) : 0,
-                  button.y + button.h, lock.w ? lock.y + lock.h : 0});
+                  button.y + button.h, lock.y + lock.h, gear.y + gear.h});
     const auto row_bytes = static_cast<std::size_t>(dw) * pixel_bytes_;
     const auto dest_offset = static_cast<std::size_t>(dx) * pixel_bytes_;
     const std::uint8_t* output = nullptr;
@@ -464,7 +477,8 @@ void Framebuffer::draw(const std::uint32_t* pixels, int frame_width, int frame_h
         const bool status_row = paint_status && y >= status_margin && y < status_margin + status_height;
         const bool button_row = button.w && y >= button.y && y < button.y + button.h;
         const bool lock_row = lock.w && y >= lock.y && y < lock.y + lock.h;
-        if (status_row || button_row || lock_row || repaint_border) {
+        const bool gear_row = gear.w && y >= gear.y && y < gear.y + gear.h;
+        if (status_row || button_row || lock_row || gear_row || repaint_border) {
             // Write the overlay and its underlying video together. Include the bars
             // so a shorter or hidden label clears any pixels left by the last one.
             auto* row = composite_row_.data();
@@ -480,6 +494,7 @@ void Framebuffer::draw(const std::uint32_t* pixels, int frame_width, int frame_h
                 if (reset.w) copy_button_row(row, reset_pixels_, reset, y, pixel_bytes_);
             }
             if (lock_row) copy_button_row(row, lock_pixels_, lock, y, pixel_bytes_);
+            if (gear_row) copy_button_row(row, settings_pixels_, gear, y, pixel_bytes_);
             if (capture_flash) {
                 if (y < flash_border || y >= height_ - flash_border) {
                     for (int x = 0; x < width_; ++x) {
@@ -572,6 +587,65 @@ Rect Framebuffer::lock_touch_area() const noexcept {
     if (!button.w) return {};
     const int x = std::max(0, button.x - button_touch_margin);
     return {x, 0, width_ - x, std::min(height_, button.y + button.h + button_touch_margin)};
+}
+
+Rect Framebuffer::settings_button() const noexcept {
+    if (width_ < 256 || height_ < 300) return {};
+    return {button_margin, status_margin + status_height + button_margin,
+            button_size, button_size};
+}
+
+Rect Framebuffer::settings_touch_area() const noexcept {
+    const auto gear = settings_button();
+    if (!gear.w) return {};
+    return {0, gear.y - 10, gear.x + gear.w + 18, gear.h + 30};
+}
+
+SettingsLayout Framebuffer::settings_layout() const noexcept {
+    const int w = std::min(440, width_ - 20);
+    constexpr int h = 230;
+    const int x = (width_ - w) / 2, y = (height_ - h) / 2;
+    return {{x, y, w, h}, {x + 16, y + 63, 54, 52},
+            {x + w - 70, y + 63, 54, 52},
+            {x + 16, y + 160, w / 2 - 24, 52},
+            {x + w / 2 + 8, y + 160, w - w / 2 - 24, 52}};
+}
+
+void Framebuffer::draw_settings(int minutes, bool save_failed) {
+    clear();
+    const auto layout = settings_layout();
+    const auto fill = [&](Rect rect, std::uint32_t rgb) {
+        const auto color = pack(rgb);
+        for (int x = 0; x < rect.w; ++x) {
+            write_pixel(row_.data() + x * pixel_bytes_, pixel_bytes_, color);
+        }
+        for (int y = rect.y; y < rect.y + rect.h; ++y) {
+            std::memcpy(at(rect.x, y), row_.data(), static_cast<std::size_t>(rect.w) * pixel_bytes_);
+        }
+    };
+    const auto label = [&](Rect rect, std::string_view text, std::uint32_t rgb) {
+        const auto color = pack(rgb);
+        const int x = rect.x + (rect.w - tile_width(text)) / 2;
+        const int y = rect.y + (rect.h - text_height) / 2;
+        text_pixels(text, [&](int dx, int dy) { write_pixel(at(x + dx, y + dy), pixel_bytes_, color); });
+    };
+    constexpr auto light = 0xf4f7fa;
+    const auto panel = layout.panel;
+    fill(panel, 0x20262d);
+    fill({panel.x, panel.y, panel.w, 2}, 0x70879a);
+    label({panel.x, panel.y + 12, panel.w, 38}, "SCREEN TIMEOUT", light);
+    for (const auto button : {layout.minus, layout.plus, layout.off, layout.done}) {
+        fill(button, 0x36424e);
+    }
+    label(layout.minus, "-", minutes > 0 ? light : 0x8a98a5);
+    label(layout.plus, "+", minutes < 30 ? light : 0x8a98a5);
+    const auto value = minutes == 0 ? std::string("OFF") : std::to_string(minutes) + " MIN";
+    label({panel.x, layout.minus.y, panel.w, layout.minus.h}, value, 0xffb62f);
+    if (save_failed) {
+        label({panel.x, panel.y + 123, panel.w, 27}, "SAVE FAILED", 0xff8383);
+    }
+    label(layout.off, "OFF", light);
+    label(layout.done, "DONE", light);
 }
 
 void Framebuffer::prepare_reset_button() {

@@ -11,6 +11,10 @@
 
 namespace microcam {
 
+struct SettingsLayout {
+    Rect panel, minus, plus, off, done;
+};
+
 class Framebuffer {
 public:
     enum class CaptureFeedback { ready, saved, failed };
@@ -34,6 +38,9 @@ public:
     Rect screenshot_touch_area() const noexcept;
     Rect reset_touch_area() const noexcept;
     Rect lock_touch_area() const noexcept;
+    Rect settings_touch_area() const noexcept;
+    SettingsLayout settings_layout() const noexcept;
+    void draw_settings(int minutes, bool save_failed);
     void save_screenshot(const std::string& directory, std::string& path) const;
     void message(std::string_view text);
 
@@ -50,6 +57,7 @@ private:
     Rect screenshot_button() const noexcept;
     Rect reset_button() const noexcept;
     Rect lock_button() const noexcept;
+    Rect settings_button() const noexcept;
     void prepare_button(CaptureFeedback feedback);
     void prepare_reset_button();
     void prepare_lock_button(bool locked);
@@ -79,7 +87,7 @@ private:
     std::vector<std::vector<StatusPixel>> status_rows_;
     std::vector<std::uint8_t> button_pixels_;
     std::vector<std::uint8_t> reset_pixels_;
-    std::vector<std::uint8_t> lock_pixels_;
+    std::vector<std::uint8_t> lock_pixels_, settings_pixels_;
     CaptureFeedback button_feedback_ = CaptureFeedback::ready;
     int lock_prepared_ = -1;  // -1 unset, 0 unlocked, 1 locked
     bool flash_visible_ = false;

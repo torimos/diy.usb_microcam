@@ -5,6 +5,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace microcam {
@@ -43,6 +44,8 @@ struct TouchUpdate {
     bool changed = false;
     bool screenshot = false;
     bool lock_toggled = false;
+    bool settings = false;
+    std::optional<std::pair<double, double>> settings_tap;
 };
 
 class TouchDevice {
@@ -59,7 +62,8 @@ public:
     const std::string& name() const { return name_; }
     const std::string& path() const { return path_; }
     TouchUpdate read_events(Viewport& view, bool sleeping, Rect screenshot_button = {},
-                            Rect reset_button = {}, Rect lock_button = {});
+                            Rect reset_button = {}, Rect lock_button = {},
+                            Rect settings_button = {}, bool settings_open = false);
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -80,7 +84,8 @@ private:
 
     void resync();
     void process_report(Clock::time_point now, Viewport& view, bool sleeping, Rect screenshot_button,
-                        Rect reset_button, Rect lock_button, TouchUpdate& update);
+                        Rect reset_button, Rect lock_button, Rect settings_button,
+                        bool settings_open, TouchUpdate& update);
     Point map(const Slot& slot, const Viewport& view) const;
     void move_contact(Point position, TouchUpdate& update);
     void block_gestures();

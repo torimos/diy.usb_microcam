@@ -241,7 +241,7 @@ void TouchDevice::resync() {
 }
 
 TouchUpdate TouchDevice::read_events(Viewport& view, bool sleeping, Rect screenshot_button, Rect reset_button,
-                                     Rect lock_button) {
+                                     Rect lock_button, Rect settings_button, bool settings_open) {
     TouchUpdate update;
     if (fd_ < 0) return update;
 
@@ -272,7 +272,7 @@ TouchUpdate TouchDevice::read_events(Viewport& view, bool sleeping, Rect screens
                     now = Clock::time_point(duration_cast<Clock::duration>(stamp));
                 }
                 process_report(now, view, sleeping && !update.activity, screenshot_button, reset_button,
-                               lock_button, update);
+                               lock_button, settings_button, settings_open, update);
                 continue;
             }
             if (dropped_) continue;
@@ -317,7 +317,8 @@ void TouchDevice::block_gestures() {
 }
 
 void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sleeping, Rect screenshot_button,
-                                 Rect reset_button, Rect lock_button, TouchUpdate& update) {
+                                 Rect reset_button, Rect lock_button, Rect settings_button,
+                                 bool settings_open, TouchUpdate& update) {
     unsigned active = 0, current = 0;
     for (unsigned i = 0; i < slots_.size(); ++i) {
         // This WaveShare panel reports each physical touch in slots 0 and 1.
@@ -372,6 +373,22 @@ void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sle
     contact_.reset();
     const auto duration = now - released.began;
     const auto point = released.position;
+    const bool button_tap = duration <= max_button_tap_time &&
+        released.max_displacement_sq <= max_button_displacement * max_button_displacement;
+    if (settings_open || update.settings) {
+        last_tap_.reset();
+        if (settings_open && button_tap && !update.settings_tap) {
+            update.settings_tap.emplace(point.x, point.y);
+        }
+        return;
+    }
+    const bool gear_start = settings_button.contains(released.start.x, released.start.y);
+    const bool gear_end = settings_button.contains(point.x, point.y);
+    if (gear_start || gear_end) {
+        last_tap_.reset();
+        if (button_tap && gear_start && gear_end) update.settings = true;
+        return;
+    }
     const bool reset_start = reset_button.contains(released.start.x, released.start.y);
     const bool reset_end = reset_button.contains(point.x, point.y);
     const bool screenshot_start = screenshot_button.contains(released.start.x, released.start.y);
@@ -380,8 +397,7 @@ void TouchDevice::process_report(Clock::time_point now, Viewport& view, bool sle
     const bool lock_end = lock_button.contains(point.x, point.y);
     if (reset_start || reset_end || screenshot_start || screenshot_end || lock_start || lock_end) {
         last_tap_.reset();
-        if (duration <= max_button_tap_time &&
-            released.max_displacement_sq <= max_button_displacement * max_button_displacement) {
+        if (button_tap) {
             if (lock_start && lock_end) {
                 view.toggle_lock();
                 update.lock_toggled = true;

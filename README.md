@@ -46,7 +46,8 @@ If the service is already running, use `sudo systemctl stop usb-microcam-native.
 | Tap the lock icon (top right) | Lock or unlock zoom. The viewer starts locked: the icon is amber with a closed padlock and taps on the picture are ignored; only the reset and camera icons still respond |
 | Tap the reset icon (bottom left) | Return to 1× and recenter the picture |
 | Tap the camera icon (bottom right) | Save the current screen as a PNG. On success, the screen border flashes and the button shows a green checkmark. The button turns red on failure. Wait half a second between captures. |
-| No touch for five minutes by default, or 15 minutes with the boot service | Turn off the LCD backlight |
+| Tap the gear below the FPS display | Set the screen timeout to Off or 1–30 minutes and tap Done to save. Tap outside the panel to cancel |
+| No touch for the configured timeout | Turn off the LCD backlight |
 | Touch while the backlight is off | Wake the display |
 
 The app uses the same active-low BCM GPIO 26 wiring as `backlight.py`, via line 26 on `/dev/gpiochip0`. Use `--gpio-chip` or `--gpio-line` if your mapping differs. `--no-backlight` leaves the GPIO alone; `--idle 0` keeps the backlight on. If the touch device or GPIO line is unavailable, video still works and the app skips idle blanking.
@@ -82,7 +83,7 @@ ls -l /dev/v4l/by-id/ /dev/input/by-id/
 
 If you previously started a temporary service of the same name with `systemd-run`, stop it first with `sudo systemctl stop usb-microcam-native.service`.
 
-The boot service requests 640×480 at 30 FPS, sets the backlight timeout to 15 minutes, and saves screenshots to `/home/pi/diy.usb_microcam/screenshots`. When run manually, the viewer uses `screenshots` in its working directory unless you pass `--screenshots DIR`.
+The boot service requests 640×480 at 30 FPS, starts with a 15-minute backlight timeout until you save a different setting, and saves screenshots to `/home/pi/diy.usb_microcam/screenshots`. When run manually, the viewer uses `screenshots` in its working directory unless you pass `--screenshots DIR`.
 
 From `/home/pi/diy.usb_microcam` on the Pi, run:
 
@@ -105,7 +106,9 @@ v4l2-ctl -d /dev/v4l/by-id/usb-_Webcam_C170-video-index0 \
   --get-ctrl=exposure_dynamic_framerate,auto_exposure
 ```
 
-Expect `enabled`, `active`, and a camera log entry that says `dynamic exposure frame rate disabled`. After rebuilding and reinstalling the binary, restart it with `sudo systemctl restart usb-microcam-native.service`. If you edit the unit, reinstall it and run `sudo systemctl daemon-reload` before restarting.
+Expect `enabled`, `active`, and a camera log entry that says `dynamic exposure frame rate disabled`. The service stores the selected timeout in `/var/lib/usb-microcam-native/screen-timeout`. A manual run uses `.microcam-timeout` in its working directory unless you pass `--settings-file PATH`. Off keeps the backlight on.
+
+After rebuilding and reinstalling the binary, restart it with `sudo systemctl restart usb-microcam-native.service`. If you edit the unit, reinstall it and run `sudo systemctl daemon-reload` before restarting.
 
 ## Copy screenshots over SMB
 
